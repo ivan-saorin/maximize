@@ -1,0 +1,39 @@
+# Rust build artifacts
+target/
+**/*.rs.bk
+*.pdb
+
+# Configuration and tokens
+config.json
+.maximize/
+
+# Git
+.git/
+.gitignore
+
+# Documentation (not needed in image)
+*.md
+!README.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Build scripts (not needed in container)
+Makefile
+build.bat
+
+# Docker files themselves
+Dockerfile
+docker-compose.yml
+.dockerignore

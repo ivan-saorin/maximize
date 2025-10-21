@@ -1,0 +1,204 @@
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenData {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenStatus {
+    pub has_tokens: bool,
+    pub is_expired: bool,
+    pub expires_at: Option<String>,
+    pub time_until_expiry: String,
+    pub expires_in_seconds: Option<i64>,
+}
+
+pub struct TokenStorage {
+    token_path: PathBuf,
+}
+
+impl TokenStorage {
+    pub fn new(token_file: &str) -> Result<Self> {
+        let token_path = PathBuf::from(token_file);
+        
+        // Additional validation: token_path should not be a directory
+        if token_path.exists() && token_path.is_dir() {
+            anyhow::bail!(
+                "Token file path '{}' is a directory. Please specify a file path like: {}{}tokens.json",
+                token_path.display(),
+                token_path.display(),
+                std::path::MAIN_SEPARATOR
+            );
+        }
+        
+        let storage = Self { token_path };
+        storage.ensure_secure_directory()?;
+        Ok(storage)
+    }
+
+    fn ensure_secure_directory(&self) -> Result<()> {
+        if let Some(parent) = self.token_path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent).context("Failed to create token directory")?;
+
+                #[cfg(unix)]
+                {
+                    let metadata = fs::metadata(parent)?;
+                    let mut permissions = metadata.permissions();
+                    permissions.set_mode(0o700);
+                    fs::set_permissions(parent, permissions)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn save_tokens(&self, access_token: &str, refresh_token: &str, expires_in: i64) -> Result<()> {
+        let expires_at = Utc::now().timestamp() + expires_in;
+        let data = TokenData {
+            access_token: access_token.to_string(),
+            refresh_token: refresh_token.to_string(),
+            expires_at,
+        };
+
+        let json = serde_json::to_string_pretty(&data)?;
+        fs::write(&self.token_path, json)?;
+
+        #[cfg(unix)]
+        {
+            let metadata = fs::metadata(&self.token_path)?;
+            let mut permissions = metadata.permissions();
+            permissions.set_mode(0o600);
+            fs::set_permissions(&self.token_path, permissions)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn load_tokens(&self) -> Result<Option<TokenData>> {
+        if !self.token_path.exists() {
+            return Ok(None);
+        }
+
+        // Check if path is a directory (common misconfiguration)
+        if self.token_path.is_dir() {
+            anyhow::bail!(
+                "Token file path '{}' is a directory. Expected a file path like: {}{}tokens.json",
+                self.token_path.display(),
+                self.token_path.display(),
+                std::path::MAIN_SEPARATOR
+            );
+        }
+
+        let contents = fs::read_to_string(&self.token_path)
+            .context(format!("Failed to read token file: {}", self.token_path.display()))?;
+        let data: TokenData = serde_json::from_str(&contents)
+            .context("Failed to parse token file as JSON")?;
+        Ok(Some(data))
+    }
+
+    pub fn clear_tokens(&self) -> Result<()> {
+        if self.token_path.exists() {
+            fs::remove_file(&self.token_path)?;
+        }
+        Ok(())
+    }
+
+    pub fn is_token_expired(&self) -> bool {
+        match self.load_tokens() {
+            Ok(Some(tokens)) => {
+                let now = Utc::now().timestamp();
+                // Add 60 second buffer before expiry
+                now >= (tokens.expires_at - 60)
+            }
+            _ => true,
+        }
+    }
+
+    pub fn get_access_token(&self) -> Option<String> {
+        if self.is_token_expired() {
+            return None;
+        }
+
+        self.load_tokens()
+            .ok()
+            .flatten()
+            .map(|t| t.access_token)
+    }
+
+    pub fn get_refresh_token(&self) -> Option<String> {
+        self.load_tokens()
+            .ok()
+            .flatten()
+            .map(|t| t.refresh_token)
+    }
+
+    pub fn get_status(&self) -> TokenStatus {
+        match self.load_tokens() {
+            Ok(Some(tokens)) => {
+                let now = Utc::now().timestamp();
+                let expires_at = DateTime::from_timestamp(tokens.expires_at, 0)
+                    .map(|dt| dt.to_rfc3339());
+
+                if now >= tokens.expires_at {
+                    let time_since = now - tokens.expires_at;
+                    let hours_since = time_since / 3600;
+                    let mins_since = (time_since % 3600) / 60;
+
+                    let time_str = if hours_since > 0 {
+                        format!("{}h {}m ago", hours_since, mins_since)
+                    } else {
+                        format!("{}m ago", mins_since)
+                    };
+
+                    TokenStatus {
+                        has_tokens: true,
+                        is_expired: true,
+                        expires_at,
+                        time_until_expiry: time_str,
+                        expires_in_seconds: None,
+                    }
+                } else {
+                    let time_remaining = tokens.expires_at - now;
+                    let hours = time_remaining / 3600;
+                    let minutes = (time_remaining % 3600) / 60;
+
+                    let time_str = if hours > 0 {
+                        format!("{}h {}m", hours, minutes)
+                    } else {
+                        format!("{}m", minutes)
+                    };
+
+                    TokenStatus {
+                        has_tokens: true,
+                        is_expired: false,
+                        expires_at,
+                        time_until_expiry: time_str,
+                        expires_in_seconds: Some(time_remaining),
+                    }
+                }
+            }
+            _ => TokenStatus {
+                has_tokens: false,
+                is_expired: true,
+                expires_at: None,
+                time_until_expiry: "No tokens".to_string(),
+                expires_in_seconds: None,
+            },
+        }
+    }
+
+    pub fn token_file(&self) -> &Path {
+        &self.token_path
+    }
+}

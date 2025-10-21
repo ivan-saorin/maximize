@@ -1,0 +1,16 @@
+{
+  "server": {
+    "port": 8081,
+    "log_level": "info",
+    "bind_address": "0.0.0.0"
+  },
+  "models": {
+    "default": "l"
+  },
+  "api": {
+    "request_timeout": 120
+  },
+  "storage": {
+    "token_file": "~/.maximize/tokens.json"
+  }
+}

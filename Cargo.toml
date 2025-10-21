@@ -1,0 +1,58 @@
+[package]
+name = "maximize"
+version = "1.0.0"
+edition = "2021"
+authors = ["Ivan"]
+description = "High-performance Anthropic Claude Max Proxy in Rust"
+
+[[bin]]
+name = "maximize"
+path = "src/main.rs"
+
+[dependencies]
+# Web framework and async runtime
+axum = { version = "0.7", features = ["macros"] }
+tokio = { version = "1.35", features = ["full"] }
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["trace", "cors"] }
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json", "stream"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# CLI and terminal
+clap = { version = "4.4", features = ["derive"] }
+dialoguer = "0.11"
+console = "0.15"
+indicatif = "0.17"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Utilities
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.21"
+sha2 = "0.10"
+rand = "0.8"
+url = "2.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Async utilities
+futures = "0.3"
+async-stream = "0.3"
+
+# File handling
+dirs = "5.0"
+webbrowser = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
