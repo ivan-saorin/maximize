@@ -79,6 +79,7 @@ pub struct Settings {
     pub request_timeout: u64,
     pub token_file: String,
     pub model_map: HashMap<String, String>,
+    pub api_key: Option<String>,
 }
 
 impl Settings {
@@ -94,6 +95,9 @@ impl Settings {
         model_map.insert("xl".to_string(), "claude-opus-4-20250514".to_string());
         model_map.insert("xxl".to_string(), "claude-opus-4-1-20250805".to_string());
 
+        // Load API key from environment
+        let api_key = std::env::var("MAXIMIZE_API_KEY").ok();
+
         Ok(Self {
             port: config.server.port,
             log_level: config.server.log_level.clone(),
@@ -102,6 +106,7 @@ impl Settings {
             request_timeout: config.api.request_timeout,
             token_file: config.storage.token_file.clone(),
             model_map,
+            api_key,
         })
     }
 

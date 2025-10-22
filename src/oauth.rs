@@ -136,15 +136,26 @@ impl OAuthManager {
     pub async fn exchange_code(&self, code: &str) -> Result<()> {
         // Split the code and state (they come as "code#state")
         let parts: Vec<&str> = code.split('#').collect();
+        if parts.len() < 2 {
+            anyhow::bail!("Invalid code format. Expected: CODE#STATE");
+        }
+        
         let actual_code = parts[0];
-        let state = parts.get(1).map(|s| s.to_string());
+        let state = parts[1].to_string();
 
-        // Load saved PKCE verifier
-        let (code_verifier, saved_state) = self
-            .load_pkce()?
-            .context("No PKCE verifier found. Start login flow first.")?;
-
-        let state = state.unwrap_or(saved_state);
+        // Try to load saved PKCE verifier (for CLI flow)
+        // If not found, use the state as the verifier (for env var flow)
+        let code_verifier = match self.load_pkce()? {
+            Some((verifier, _)) => {
+                tracing::debug!("Using PKCE verifier from file (CLI flow)");
+                verifier
+            }
+            None => {
+                tracing::debug!("Using state as PKCE verifier (environment variable flow)");
+                // In the OAuth flow, the state IS the code_verifier
+                state.clone()
+            }
+        };
 
         let client = reqwest::Client::new();
         let response = client
@@ -168,11 +179,15 @@ impl OAuthManager {
 
         let token_data: TokenResponse = response.json().await?;
 
+        // Log what we received from Anthropic
+        let expires_in = token_data.expires_in.unwrap_or(86400); // Default to 24 hours
+        tracing::info!("Token exchange successful. Expires in: {} seconds (~{} hours)", expires_in, expires_in / 3600);
+
         // Store tokens securely
         self.storage.save_tokens(
             &token_data.access_token,
             &token_data.refresh_token,
-            token_data.expires_in.unwrap_or(3600),
+            expires_in,
         )?;
 
         // Clear PKCE values after successful exchange
@@ -212,11 +227,15 @@ impl OAuthManager {
 
         let token_data: TokenResponse = response.json().await?;
 
+        // Log what we received from Anthropic
+        let expires_in = token_data.expires_in.unwrap_or(86400); // Default to 24 hours
+        tracing::info!("Token refresh successful. New token expires in: {} seconds (~{} hours)", expires_in, expires_in / 3600);
+
         // Update stored tokens
         self.storage.save_tokens(
             &token_data.access_token,
             &token_data.refresh_token,
-            token_data.expires_in.unwrap_or(3600),
+            expires_in,
         )?;
 
         tracing::info!("Successfully refreshed OAuth tokens");

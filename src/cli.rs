@@ -170,6 +170,7 @@ impl Cli {
                 let state = AppState {
                     oauth_manager,
                     settings: settings.clone(),
+                    api_key: settings.api_key.clone(),
                 };
 
                 let app = create_router(state);

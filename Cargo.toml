@@ -50,6 +50,7 @@ async-stream = "0.3"
 # File handling
 dirs = "5.0"
 webbrowser = "0.8"
+dotenvy = "0.15"
 
 [profile.release]
 opt-level = 3

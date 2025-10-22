@@ -1,39 +1,35 @@
-# Rust build artifacts
-target/
-**/*.rs.bk
-*.pdb
-
-# Configuration and tokens
-config.json
-.maximize/
-
 # Git
-.git/
+.git
 .gitignore
-
-# Documentation (not needed in image)
-*.md
-!README.md
+.gitattributes
 
 # IDE
-.vscode/
-.idea/
+.vscode
+.idea
 *.swp
 *.swo
 *~
+
+# Rust build artifacts
+target/
+Cargo.lock
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Docker
+Dockerfile.dev
+docker-compose*.yml
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
+# Config examples
+config.example.json
 
-# Build scripts (not needed in container)
-Makefile
-build.bat
-
-# Docker files themselves
-Dockerfile
-docker-compose.yml
-.dockerignore
+# Local tokens
+tokens.json
+.maximize/

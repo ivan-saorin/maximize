@@ -86,6 +86,37 @@ impl TokenStorage {
     }
 
     pub fn load_tokens(&self) -> Result<Option<TokenData>> {
+        // First, try loading from environment variables (for containerized deployments)
+        // But ONLY if both are set AND non-empty
+        if let (Ok(access_token), Ok(refresh_token)) = (
+            std::env::var("MAXIMIZE_ACCESS_TOKEN"),
+            std::env::var("MAXIMIZE_REFRESH_TOKEN"),
+        ) {
+            // Only use env vars if they're actually populated (not empty strings)
+            if !access_token.trim().is_empty() && !refresh_token.trim().is_empty() {
+                let expires_in = std::env::var("MAXIMIZE_TOKEN_EXPIRES_IN")
+                    .ok()
+                    .and_then(|v| v.parse::<i64>().ok())
+                    .unwrap_or(86400); // Default 24 hours
+
+                let expires_at = Utc::now().timestamp() + expires_in;
+                
+                tracing::debug!("Loading tokens from environment variables");
+                tracing::debug!("Token expires in: {} seconds (~{} hours)", expires_in, expires_in / 3600);
+                
+                return Ok(Some(TokenData {
+                    access_token,
+                    refresh_token,
+                    expires_at,
+                }));
+            } else {
+                tracing::debug!("Environment variables set but empty, falling back to file");
+            }
+        }
+
+        tracing::debug!("No environment variables found, trying file: {}", self.token_path.display());
+
+        // Fall back to file-based token storage
         if !self.token_path.exists() {
             return Ok(None);
         }
@@ -104,6 +135,10 @@ impl TokenStorage {
             .context(format!("Failed to read token file: {}", self.token_path.display()))?;
         let data: TokenData = serde_json::from_str(&contents)
             .context("Failed to parse token file as JSON")?;
+        
+        tracing::debug!("Loading tokens from file: {}", self.token_path.display());
+        tracing::debug!("File token expires at: {}", data.expires_at);
+        
         Ok(Some(data))
     }
 

@@ -1,6 +1,7 @@
 use axum::{
-    extract::State,
+    extract::{Request, State},
     http::{HeaderMap, StatusCode},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -10,7 +11,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Instant;
 use tower_http::trace::TraceLayer;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::oauth::OAuthManager;
@@ -53,6 +54,7 @@ pub struct AnthropicMessageRequest {
 pub struct AppState {
     pub oauth_manager: Arc<OAuthManager>,
     pub settings: Arc<Settings>,
+    pub api_key: Option<String>,
 }
 
 fn log_request(request_id: &str, request_data: &AnthropicMessageRequest, headers: &HeaderMap) {
@@ -245,6 +247,94 @@ pub async fn auth_status(State(state): State<AppState>) -> impl IntoResponse {
     Json(status)
 }
 
+pub async fn debug_token(State(state): State<AppState>) -> impl IntoResponse {
+    let storage = state.oauth_manager.storage();
+    
+    // Check if we have a token from environment
+    let env_token = std::env::var("MAXIMIZE_ACCESS_TOKEN").ok();
+    
+    if let Some(token) = env_token {
+        let preview = if token.len() > 20 {
+            format!("{}...{}", &token[..10], &token[token.len()-10..])
+        } else {
+            "***".to_string()
+        };
+        
+        let is_valid_format = token.starts_with("sk-ant-") || token.starts_with("sess-");
+        
+        Json(json!({
+            "has_token": true,
+            "source": "environment",
+            "starts_with": &token[..std::cmp::min(10, token.len())],
+            "token_length": token.len(),
+            "token_preview": preview,
+            "looks_valid": is_valid_format,
+            "warning": if !is_valid_format {
+                Some("Token format looks wrong! Anthropic tokens should start with 'sk-ant-'")
+            } else {
+                None
+            }
+        }))
+    } else if let Some(token) = storage.get_access_token() {
+        let preview = if token.len() > 20 {
+            format!("{}...{}", &token[..10], &token[token.len()-10..])
+        } else {
+            "***".to_string()
+        };
+        
+        let is_valid_format = token.starts_with("sk-ant-") || token.starts_with("sess-");
+        
+        Json(json!({
+            "has_token": true,
+            "source": "file",
+            "starts_with": &token[..std::cmp::min(10, token.len())],
+            "token_length": token.len(),
+            "token_preview": preview,
+            "looks_valid": is_valid_format,
+            "warning": if !is_valid_format {
+                Some("Token format looks wrong! Anthropic tokens should start with 'sk-ant-'")
+            } else {
+                None
+            }
+        }))
+    } else {
+        Json(json!({
+            "has_token": false,
+            "error": "No token found in environment or file"
+        }))
+    }
+}
+
+pub async fn token_debug(State(state): State<AppState>) -> impl IntoResponse {
+    let token = state.oauth_manager.storage().get_access_token();
+    
+    let token_info = if let Some(t) = token {
+        if t.len() > 16 {
+            json!({
+                "has_token": true,
+                "token_preview": format!("{}...{}", &t[..12], &t[t.len()-12..]),
+                "token_length": t.len(),
+                "starts_with": &t[..10],
+                "source": if std::env::var("MAXIMIZE_ACCESS_TOKEN").is_ok() { "environment" } else { "file" }
+            })
+        } else {
+            json!({
+                "has_token": true,
+                "token_preview": "[too short]",
+                "token_length": t.len(),
+                "warning": "Token is unusually short"
+            })
+        }
+    } else {
+        json!({
+            "has_token": false,
+            "message": "No token loaded"
+        })
+    };
+    
+    Json(token_info)
+}
+
 pub async fn anthropic_messages(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -282,6 +372,19 @@ pub async fn anthropic_messages(
                 Json(json!({"error": {"message": "OAuth expired; please authenticate using the CLI"}})),
             )
         })?;
+    
+    // Debug: Log token info (first/last 8 chars only for security)
+    if access_token.len() > 16 {
+        info!(
+            "[{}] Using access token: {}...{} (length: {})",
+            request_id,
+            &access_token[..8],
+            &access_token[access_token.len()-8..],
+            access_token.len()
+        );
+    } else {
+        warn!("[{}] Access token is unusually short: {} chars", request_id, access_token.len());
+    }
 
     // Ensure max_tokens is sufficient if thinking is enabled
     if let Some(thinking) = &request.thinking {
@@ -387,11 +490,72 @@ pub async fn anthropic_messages(
     }
 }
 
+async fn api_key_auth(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    request: Request,
+    next: Next,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    // Skip auth check if no API key is configured
+    let Some(required_key) = &state.api_key else {
+        return Ok(next.run(request).await);
+    };
+
+    // Check Authorization header
+    let auth_header = headers
+        .get("authorization")
+        .or_else(|| headers.get("x-api-key"))
+        .and_then(|v| v.to_str().ok());
+
+    let provided_key = match auth_header {
+        Some(header) => {
+            // Support both "Bearer <key>" and direct key formats
+            if header.starts_with("Bearer ") {
+                header.trim_start_matches("Bearer ")
+            } else {
+                header
+            }
+        }
+        None => {
+            warn!("API request missing authorization header");
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "error": {
+                        "type": "authentication_error",
+                        "message": "Missing API key. Provide via Authorization header."
+                    }
+                })),
+            ));
+        }
+    };
+
+    if provided_key != required_key {
+        warn!("API request with invalid API key");
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "error": {
+                    "type": "authentication_error",
+                    "message": "Invalid API key"
+                }
+            })),
+        ));
+    }
+
+    Ok(next.run(request).await)
+}
+
 pub fn create_router(state: AppState) -> Router {
+    let protected_routes = Router::new()
+        .route("/v1/messages", post(anthropic_messages))
+        .layer(middleware::from_fn_with_state(state.clone(), api_key_auth));
+
     Router::new()
         .route("/healthz", get(health_check))
         .route("/auth/status", get(auth_status))
-        .route("/v1/messages", post(anthropic_messages))
+        .route("/debug/token", get(token_debug))  // Debug endpoint
+        .merge(protected_routes)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

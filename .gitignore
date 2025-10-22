@@ -2,10 +2,15 @@
 /target/
 **/*.rs.bk
 *.pdb
-Cargo.lock
 
-# Config
-config.json
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Token files
+tokens.json
+.maximize/
 
 # IDE
 .vscode/
@@ -21,8 +26,6 @@ Thumbs.db
 # Logs
 *.log
 
-# Token storage
-.maximize/
-
-# Docker
-docker-compose.override.yml
+# Build artifacts
+/dist/
+/build/

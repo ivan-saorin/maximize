@@ -1,32 +1,22 @@
-# Multi-stage build for minimal final image
-FROM rust:1.82-slim-bookworm AS builder
+# Build stage
+FROM rust:1.83-slim AS builder
 
-WORKDIR /build
+WORKDIR /app
 
-# Install build dependencies
+# Install dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy manifests
+# Copy project files
 COPY Cargo.toml ./
-
-# Create dummy main to cache dependencies
-RUN mkdir src && \
-    echo "fn main() {}" > src/main.rs && \
-    cargo build --release && \
-    rm -rf src
-
-# Copy actual source code
 COPY src ./src
 
-# Build the actual application
-# Touch main.rs to force rebuild of our code only
-RUN touch src/main.rs && \
-    cargo build --release
+# Build release binary
+RUN cargo build --release
 
-# Runtime stage - minimal image
+# Runtime stage
 FROM debian:bookworm-slim
 
 WORKDIR /app
@@ -35,24 +25,24 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy binary from builder
-COPY --from=builder /build/target/release/maximize /app/maximize
+COPY --from=builder /app/target/release/maximize /usr/local/bin/maximize
 
-# Copy configuration example
-COPY config.example.json /app/config.example.json
+# Create non-root user
+RUN useradd -m -u 1000 maximize && \
+    chown -R maximize:maximize /app
 
-# Create directory for token storage
-RUN mkdir -p /app/.maximize
+USER maximize
 
 # Expose port
 EXPOSE 8081
 
-# Set environment variables
-ENV RUST_LOG=info
-ENV BIND_ADDRESS=0.0.0.0
-ENV PORT=8081
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8081/healthz || exit 1
 
-# Run the binary
-ENTRYPOINT ["/app/maximize"]
+# Run in server-only mode
+CMD ["maximize", "--server-only"]

@@ -2,34 +2,23 @@ version: '3.8'
 
 services:
   maximize:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: maximize
+    build: .
     ports:
       - "8081:8081"
-    volumes:
-      # Persist token storage
-      - maximize-tokens:/app/.maximize
-      # Optional: mount custom config ONLY if it exists
-      # Comment out this line if you don't have a config.json file
-      # - ./config.json:/app/config.json:ro
     environment:
-      - PORT=8081
-      - BIND_ADDRESS=0.0.0.0
-      - LOG_LEVEL=info
-      - TOKEN_FILE=/app/.maximize/tokens.json
+      # Set these with your actual tokens
+      - MAXIMIZE_AUTHENTICATION_CODE=${MAXIMIZE_AUTHENTICATION_CODE:-}
+      - MAXIMIZE_ACCESS_TOKEN=${MAXIMIZE_ACCESS_TOKEN:-}
+      - MAXIMIZE_REFRESH_TOKEN=${MAXIMIZE_REFRESH_TOKEN:-}
+      - MAXIMIZE_API_KEY=${MAXIMIZE_API_KEY:-}
+      - MAXIMIZE_TOKEN_EXPIRES_IN=86400
+      # Debug mode
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
     restart: unless-stopped
-    # Required for interactive CLI authentication
-    stdin_open: true
-    tty: true
-    networks:
-      - maximize-network
-
-volumes:
-  maximize-tokens:
-    driver: local
-
-networks:
-  maximize-network:
-    driver: bridge
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
