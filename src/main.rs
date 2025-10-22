@@ -43,7 +43,22 @@ async fn run_server_only(settings: settings::Settings) -> Result<()> {
             Ok(_) => {
                 info!("✅ Successfully exchanged authorization code for tokens!");
                 info!("💡 Tokens saved to: {}", settings.token_file);
-                info!("💡 You can now remove MAXIMIZE_AUTHENTICATION_CODE from environment.");
+                info!("");
+                
+                // Load and display the tokens so user can set them as env vars
+                if let Ok(Some(token_data)) = oauth_manager.storage().load_tokens() {
+                    info!("📋 COPY THESE TOKENS TO YOUR ENVIRONMENT VARIABLES:");
+                    info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                    info!("MAXIMIZE_ACCESS_TOKEN=\"{}\"", token_data.access_token);
+                    info!("MAXIMIZE_REFRESH_TOKEN=\"{}\"", token_data.refresh_token);
+                    info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                    info!("");
+                    info!("💡 After setting these, remove MAXIMIZE_AUTHENTICATION_CODE");
+                    info!("💡 Tokens will auto-refresh and persist across restarts!");
+                } else {
+                    tracing::warn!("Could not read tokens from file to display them");
+                }
+                info!("");
             }
             Err(e) => {
                 tracing::error!("❌ Failed to exchange authorization code: {}", e);
