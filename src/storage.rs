@@ -85,38 +85,7 @@ impl TokenStorage {
         Ok(())
     }
 
-    pub fn load_tokens(&self) -> Result<Option<TokenData>> {
-        // First, try loading from environment variables (for containerized deployments)
-        // But ONLY if both are set AND non-empty
-        if let (Ok(access_token), Ok(refresh_token)) = (
-            std::env::var("MAXIMIZE_ACCESS_TOKEN"),
-            std::env::var("MAXIMIZE_REFRESH_TOKEN"),
-        ) {
-            // Only use env vars if they're actually populated (not empty strings)
-            if !access_token.trim().is_empty() && !refresh_token.trim().is_empty() {
-                let expires_in = std::env::var("MAXIMIZE_TOKEN_EXPIRES_IN")
-                    .ok()
-                    .and_then(|v| v.parse::<i64>().ok())
-                    .unwrap_or(86400); // Default 24 hours
-
-                let expires_at = Utc::now().timestamp() + expires_in;
-                
-                tracing::debug!("Loading tokens from environment variables");
-                tracing::debug!("Token expires in: {} seconds (~{} hours)", expires_in, expires_in / 3600);
-                
-                return Ok(Some(TokenData {
-                    access_token,
-                    refresh_token,
-                    expires_at,
-                }));
-            } else {
-                tracing::debug!("Environment variables set but empty, falling back to file");
-            }
-        }
-
-        tracing::debug!("No environment variables found, trying file: {}", self.token_path.display());
-
-        // Fall back to file-based token storage
+    fn try_load_from_file(&self) -> Result<Option<TokenData>> {
         if !self.token_path.exists() {
             return Ok(None);
         }
@@ -140,6 +109,74 @@ impl TokenStorage {
         tracing::debug!("File token expires at: {}", data.expires_at);
         
         Ok(Some(data))
+    }
+
+    fn save_token_data(&self, data: &TokenData) -> Result<()> {
+        let json = serde_json::to_string_pretty(data)?;
+        fs::write(&self.token_path, json)?;
+
+        #[cfg(unix)]
+        {
+            let metadata = fs::metadata(&self.token_path)?;
+            let mut permissions = metadata.permissions();
+            permissions.set_mode(0o600);
+            fs::set_permissions(&self.token_path, permissions)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn load_tokens(&self) -> Result<Option<TokenData>> {
+        // First, try loading from environment variables (for containerized deployments)
+        // But ONLY if both are set AND non-empty
+        if let (Ok(access_token), Ok(refresh_token)) = (
+            std::env::var("MAXIMIZE_ACCESS_TOKEN"),
+            std::env::var("MAXIMIZE_REFRESH_TOKEN"),
+        ) {
+            // Only use env vars if they're actually populated (not empty strings)
+            if !access_token.trim().is_empty() && !refresh_token.trim().is_empty() {
+                // Try to load existing token data from file to preserve expiry time
+                // This ensures we don't reset the expiry on every load
+                if let Ok(Some(existing)) = self.try_load_from_file() {
+                    // If we have existing data with the same tokens, use its expiry
+                    if existing.access_token == access_token {
+                        tracing::debug!("Loading tokens from environment variables (preserving existing expiry)");
+                        return Ok(Some(existing));
+                    }
+                }
+                
+                // New tokens from env vars - calculate initial expiry
+                let expires_in = std::env::var("MAXIMIZE_TOKEN_EXPIRES_IN")
+                    .ok()
+                    .and_then(|v| v.parse::<i64>().ok())
+                    .unwrap_or(86400); // Default 24 hours
+
+                let expires_at = Utc::now().timestamp() + expires_in;
+                
+                tracing::debug!("Loading NEW tokens from environment variables");
+                tracing::debug!("Token expires in: {} seconds (~{} hours)", expires_in, expires_in / 3600);
+                
+                let token_data = TokenData {
+                    access_token,
+                    refresh_token,
+                    expires_at,
+                };
+                
+                // Save to file to persist expiry time
+                if let Err(e) = self.save_token_data(&token_data) {
+                    tracing::warn!("Failed to persist env token data to file: {}", e);
+                }
+                
+                return Ok(Some(token_data));
+            } else {
+                tracing::debug!("Environment variables set but empty, falling back to file");
+            }
+        }
+
+        tracing::debug!("No environment variables found, trying file: {}", self.token_path.display());
+
+        // Fall back to file-based token storage
+        self.try_load_from_file()
     }
 
     pub fn clear_tokens(&self) -> Result<()> {
