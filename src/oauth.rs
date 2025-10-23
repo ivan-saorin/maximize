@@ -181,7 +181,9 @@ impl OAuthManager {
 
         // Log what we received from Anthropic
         let expires_in = token_data.expires_in.unwrap_or(86400); // Default to 24 hours
+        let expires_at = chrono::Utc::now().timestamp() + expires_in;
         tracing::info!("Token exchange successful. Expires in: {} seconds (~{} hours)", expires_in, expires_in / 3600);
+        tracing::info!("Absolute expiry timestamp: {} (set MAXIMIZE_TOKEN_EXPIRES_AT={} for persistence)", expires_at, expires_at);
 
         // Store tokens securely
         self.storage.save_tokens(
@@ -229,7 +231,9 @@ impl OAuthManager {
 
         // Log what we received from Anthropic
         let expires_in = token_data.expires_in.unwrap_or(86400); // Default to 24 hours
+        let expires_at = chrono::Utc::now().timestamp() + expires_in;
         tracing::info!("Token refresh successful. New token expires in: {} seconds (~{} hours)", expires_in, expires_in / 3600);
+        tracing::info!("Absolute expiry timestamp: {} (set MAXIMIZE_TOKEN_EXPIRES_AT={} for persistence)", expires_at, expires_at);
 
         // Update stored tokens
         self.storage.save_tokens(

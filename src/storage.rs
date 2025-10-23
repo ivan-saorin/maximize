@@ -145,16 +145,38 @@ impl TokenStorage {
                     }
                 }
                 
-                // New tokens from env vars - calculate initial expiry
-                let expires_in = std::env::var("MAXIMIZE_TOKEN_EXPIRES_IN")
-                    .ok()
-                    .and_then(|v| v.parse::<i64>().ok())
-                    .unwrap_or(86400); // Default 24 hours
-
-                let expires_at = Utc::now().timestamp() + expires_in;
+                // New tokens from env vars - get expiry timestamp
+                // First check if we have an absolute expiry timestamp (preferred)
+                let expires_at = if let Ok(expires_at_str) = std::env::var("MAXIMIZE_TOKEN_EXPIRES_AT") {
+                    // Use absolute timestamp if provided
+                    match expires_at_str.parse::<i64>() {
+                        Ok(ts) => {
+                            tracing::debug!("Using absolute MAXIMIZE_TOKEN_EXPIRES_AT: {}", ts);
+                            ts
+                        }
+                        Err(_) => {
+                            tracing::warn!("Invalid MAXIMIZE_TOKEN_EXPIRES_AT value, falling back to expires_in");
+                            let expires_in = std::env::var("MAXIMIZE_TOKEN_EXPIRES_IN")
+                                .ok()
+                                .and_then(|v| v.parse::<i64>().ok())
+                                .unwrap_or(86400);
+                            Utc::now().timestamp() + expires_in
+                        }
+                    }
+                } else {
+                    // Fall back to relative expires_in (unreliable after restart!)
+                    tracing::warn!("No MAXIMIZE_TOKEN_EXPIRES_AT set, calculating from now (may be incorrect after restart)");
+                    let expires_in = std::env::var("MAXIMIZE_TOKEN_EXPIRES_IN")
+                        .ok()
+                        .and_then(|v| v.parse::<i64>().ok())
+                        .unwrap_or(86400); // Default 24 hours
+                    Utc::now().timestamp() + expires_in
+                };
                 
+                let now = Utc::now().timestamp();
+                let time_until_expiry = expires_at - now;
                 tracing::debug!("Loading NEW tokens from environment variables");
-                tracing::debug!("Token expires in: {} seconds (~{} hours)", expires_in, expires_in / 3600);
+                tracing::debug!("Token expires at: {} (in {} seconds, ~{} hours)", expires_at, time_until_expiry, time_until_expiry / 3600);
                 
                 let token_data = TokenData {
                     access_token,
