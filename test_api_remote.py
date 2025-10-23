@@ -12,8 +12,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configuration
-BASE_URL = os.getenv("MAXIMIZE_BASE_URL", "xxxxxxxxxxxxx")
-API_KEY = os.getenv("MAXIMIZE_API_KEY", "dummy")  # Use env var or default
+BASE_URL = os.getenv("MAXIMIZE_BASE_URL", "https://maximize.automa.016180.xyz")
+API_KEY = os.getenv("MAXIMIZE_API_KEY", "max-5763-2548-9184-0810-2743-7182-4371-2878-9576-8768")  # Use env var or default
 
 # Colors for terminal output
 class Colors:
