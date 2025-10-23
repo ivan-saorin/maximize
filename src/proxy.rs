@@ -432,7 +432,7 @@ pub async fn anthropic_messages(
                 error!("[{}] Anthropic API error {}: {}", request_id, status, error_text);
 
                 // If we got 401 Unauthorized, try to refresh token and retry ONCE
-                if status == StatusCode::UNAUTHORIZED {
+                if status.as_u16() == 401 {
                     warn!("[{}] Got 401 Unauthorized - token might be expired, attempting refresh and retry", request_id);
                     
                     // Try to refresh the token

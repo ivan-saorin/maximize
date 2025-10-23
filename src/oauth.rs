@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use base64::{engine::general_purpose, Engine};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
