@@ -431,6 +431,88 @@ pub async fn anthropic_messages(
                 let error_text = response.text().await.unwrap_or_default();
                 error!("[{}] Anthropic API error {}: {}", request_id, status, error_text);
 
+                // If we got 401 Unauthorized, try to refresh token and retry ONCE
+                if status == StatusCode::UNAUTHORIZED {
+                    warn!("[{}] Got 401 Unauthorized - token might be expired, attempting refresh and retry", request_id);
+                    
+                    // Try to refresh the token
+                    match state.oauth_manager.refresh_tokens().await {
+                        Ok(true) => {
+                            info!("[{}] Token refresh successful, retrying request", request_id);
+                            
+                            // Get the new token
+                            let new_token = state.oauth_manager.storage().get_access_token()
+                                .ok_or_else(|| {
+                                    error!("[{}] No token available after refresh", request_id);
+                                    (
+                                        StatusCode::UNAUTHORIZED,
+                                        Json(json!({"error": {"message": "Token refresh succeeded but no token available"}})),
+                                    )
+                                })?;
+                            
+                            // Retry the request with new token
+                            match make_anthropic_request(&request, &new_token, client_beta_headers).await {
+                                Ok(retry_response) => {
+                                    let retry_status = retry_response.status();
+                                    info!("[{}] Retry completed with status={}", request_id, retry_status);
+                                    
+                                    if !retry_status.is_success() {
+                                        let retry_error = retry_response.text().await.unwrap_or_default();
+                                        error!("[{}] Retry also failed: {}", request_id, retry_error);
+                                        let error_json: Value = serde_json::from_str(&retry_error)
+                                            .unwrap_or_else(|_| json!({"error": {"type": "api_error", "message": retry_error}}));
+                                        return Err((StatusCode::from_u16(retry_status.as_u16()).unwrap(), Json(error_json)));
+                                    }
+                                    
+                                    // Retry succeeded! Process the response
+                                    if is_streaming {
+                                        let stream = retry_response.bytes_stream();
+                                        let body = axum::body::Body::from_stream(stream);
+                                        return Ok(Response::builder()
+                                            .status(StatusCode::OK)
+                                            .header("Content-Type", "text/event-stream")
+                                            .header("Cache-Control", "no-cache")
+                                            .header("Connection", "keep-alive")
+                                            .body(body)
+                                            .unwrap());
+                                    } else {
+                                        let body_text = retry_response.text().await.map_err(|e| {
+                                            error!("[{}] Failed to read retry response body: {}", request_id, e);
+                                            (
+                                                StatusCode::INTERNAL_SERVER_ERROR,
+                                                Json(json!({"error": {"message": format!("Failed to read response: {}", e)}})),
+                                            )
+                                        })?;
+                                        let anthropic_response: Value = serde_json::from_str(&body_text).map_err(|e| {
+                                            error!("[{}] Failed to parse retry response JSON: {}", request_id, e);
+                                            (
+                                                StatusCode::INTERNAL_SERVER_ERROR,
+                                                Json(json!({"error": {"message": format!("Failed to parse response: {}", e)}})),
+                                            )
+                                        })?;
+                                        let final_elapsed_ms = start_time.elapsed().as_millis();
+                                        info!("[{}] ===== ANTHROPIC MESSAGES FINISHED (after retry) ===== Total time: {}ms", request_id, final_elapsed_ms);
+                                        return Ok(Json(anthropic_response).into_response());
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("[{}] Retry request failed: {}", request_id, e);
+                                    return Err((
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        Json(json!({"error": {"message": format!("Retry failed: {}", e)}})),
+                                    ));
+                                }
+                            }
+                        }
+                        Ok(false) => {
+                            error!("[{}] Token refresh failed", request_id);
+                        }
+                        Err(e) => {
+                            error!("[{}] Error during token refresh: {}", request_id, e);
+                        }
+                    }
+                }
+
                 let error_json: Value = serde_json::from_str(&error_text)
                     .unwrap_or_else(|_| json!({"error": {"type": "api_error", "message": error_text}}));
 
